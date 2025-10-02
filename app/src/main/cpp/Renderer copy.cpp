@@ -1,12 +1,132 @@
-#include "Renderer.hpp"
+#include "Renderer copy.hpp"
 
-////////////////// instance //////////////////
+////////////////// public //////////////////
+
+void Renderer::initialize()
+{
+   createInstance();
+   createSurface();
+   selectPhysicalDeviceAndQueueFamilyIndex();
+   cacheSurfaceData();
+   createDevice();
+   createSwapchain();
+   createDiscriptorSetLayouts();
+   createCommandBuffer();
+}
+
+void Renderer::finalize()
+{
+    wait();
+}
+
+void Renderer::nextFrame()
+{
+    auto& frameInfo = m_frameCommandInfos[m_currentFrameIndex];
+    auto fence = frameInfo.commandFence;
+    vkWaitForFences(m_vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
+    auto res = vkAcquireNextImageKHR(m_vkDevice, m_swapchain, UINT64_MAX, frameInfo.presentCompleted, VK_NULL_HANDLE, &m_swapchainImageIndex);
+    if (res == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+      return;
+    }
+    vkResetFences(m_vkDevice, 1, &fence);
+
+    // コマンドバッファを開始.
+    vkResetCommandBuffer(frameInfo.commandBuffer, 0);
+    VkCommandBufferBeginInfo commandBeginInfo{
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+    vkBeginCommandBuffer(frameInfo.commandBuffer, &commandBeginInfo);
+}
+
+void Renderer::submit()
+{
+    auto& frameInfo = m_frameCommandInfos[m_currentFrameIndex];
+    vkEndCommandBuffer(frameInfo.commandBuffer);
+
+    // コマンドを発行する.
+    VkPipelineStageFlags waitStage{ VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    VkSubmitInfo submitInfo{
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .waitSemaphoreCount = 1,
+      .pWaitSemaphores = &frameInfo.presentCompleted,
+      .pWaitDstStageMask = &waitStage,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &frameInfo.commandBuffer,
+      .signalSemaphoreCount = 1,
+      .pSignalSemaphores = &frameInfo.renderCompleted,
+    };
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, frameInfo.commandFence);
+
+    m_currentFrameIndex = (++m_currentFrameIndex) % InflightFrames;
+
+    // プレゼンテーションの実行.
+    VkPresentInfoKHR presentInfo{
+      .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+      .waitSemaphoreCount = 1,
+      .pWaitSemaphores = &frameInfo.renderCompleted,
+      .swapchainCount = 1,
+      .pSwapchains = &m_swapchain,
+      .pImageIndices = &m_swapchainImageIndex
+    };
+    vkQueuePresentKHR(m_graphicsQueue, &presentInfo);
+
+}
+
+void Renderer::wait()
+{
+    if (m_vkDevice != VK_NULL_HANDLE)
+    {
+      vkDeviceWaitIdle(m_vkDevice);
+    }
+}
+
+void Renderer::submitOneShot()
+{
+    vkEndCommandBuffer(commandBuffer);
+
+    VkFenceCreateInfo fenceCI{
+      .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    VkFence waitFence;
+    vkCreateFence(m_vkDevice, &fenceCI, nullptr, &waitFence);
+
+    VkSubmitInfo submitInfo{
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &commandBuffer,
+    };
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, waitFence);
+
+    // 実行完了を待機して、廃棄処理.
+    vkWaitForFences(m_vkDevice, 1, &waitFence, VK_TRUE, UINT64_MAX);
+    vkDestroyFence(m_vkDevice, waitFence, nullptr);
+    vkFreeCommandBuffers(m_vkDevice, m_commandPool, 1, &commandBuffer);
+}
+
+void Renderer::createUI()
+{
+    ImGui::Begin("Information");
+    ImGui::Text("FPS: %.2f", ImGui::GetIO().Framerate);
+    ImGui::Text(useDynamicRendering ? "USE Dynamic Rendering" : "USE RenderPass");
+    {
+      float* v = reinterpret_cast<float*>(&m_lightDir);
+      ImGui::InputFloat3("LightDir", v);
+    }
+    ImGui::End();
+
+    // ImGui の描画処理.
+    ImGui::Render();
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+}
+
+////////////////// private //////////////////
 
 void Renderer::createInstance()
 {
-    _applicationInfo.pApplicationName = "YourApp";
+    _applicationInfo.pApplicationName = "DrawModel";
     _applicationInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    _applicationInfo.pEngineName = "NoEngine";
+    _applicationInfo.pEngineName = "SimpleEngine";
     _applicationInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     _applicationInfo.apiVersion = vk::enumerateInstanceVersion();
 
@@ -23,7 +143,11 @@ void Renderer::createInstance()
     _instance = vk::createInstanceUnique(instanceCreateInfo);
 }
 
-////////////////// physical device //////////////////
+void Renderer::createSurface()
+{
+    vk::AndroidSurfaceCreateInfoKHR surfaceCreateInfo = vk::AndroidSurfaceCreateInfoKHR(vk::AndroidSurfaceCreateFlagsKHR(), _pApp->window);
+    _surface = _instance->createAndroidSurfaceKHRUnique(surfaceCreateInfo);
+}
 
 std::optional<uint32_t> Renderer::getQueueFamilyIndex(vk::PhysicalDevice& physicalDevice, vk::UniqueSurfaceKHR& surface)
 {
@@ -110,19 +234,6 @@ void Renderer::selectPhysicalDeviceAndQueueFamilyIndex()
     _cachedPhysicalDeviceMemoryProperties = _physicalDevice.getMemoryProperties();
 }
 
-void Renderer::createGraphicsQueue() 
-{
-    _graphicsQueue = _device.get().getQueue(_queueFamilyIndex, 0);
-}
-
-////////////////// surface //////////////////
-
-void Renderer::createSurface()
-{
-    vk::AndroidSurfaceCreateInfoKHR surfaceCreateInfo = vk::AndroidSurfaceCreateInfoKHR(vk::AndroidSurfaceCreateFlagsKHR(), _pApp->window);
-    _surface = _instance->createAndroidSurfaceKHRUnique(surfaceCreateInfo);
-}
-
 void Renderer::cacheSurfaceData()
 {
     // 「物理デバイスが対象のサーフェスを扱う能力」の情報を取得する
@@ -135,7 +246,10 @@ void Renderer::cacheSurfaceData()
     _surfacePresentModes = _physicalDevice.getSurfacePresentModesKHR(_surface.get());
 }
 
-////////////////// device //////////////////
+void Renderer::createGraphicsQueue() 
+{
+    _graphicsQueue = _device.get().getQueue(_queueFamilyIndex, 0);
+}
 
 void Renderer::createDevice()
 {
@@ -256,12 +370,46 @@ void Renderer::createSwapchain() {
         _swapchainImageViews[i] = _device.get().createImageViewUnique(imgViewCreateInfo);
     }
 
-
-
-
     vk::FenceCreateInfo fenceCreateInfo;
     _swapchainImgFence = _device->createFenceUnique(fenceCreateInfo);
 }
+
+void Renderer::createDiscriptorSetLayouts()
+{
+    // vk::DescriptorSetLayoutBindingがデスクリプタ1つの情報を表す
+    // これの配列からデスクリプタセットレイアウトを作成
+    //
+    // binding はシェーダと結びつけるための番号を表す = バインディング番号
+    //    頂点シェーダにlayout(set = 0, binding = 0)などと指定したが、このときのbindingの数字と揃えてあることに注意
+    // descriptorType はデスクリプタの種別を示す
+    //    今回シェーダに渡すものはバッファなのでvk::DescriptorType::eUniformBufferを指定
+    // descriptorCount はデスクリプタの個数を表す
+    //    デスクリプタは配列として複数のデータを持てるが、ここにその要素数を指定する 今回は1個だけなので1を指定
+    // stageFlags はデータを渡す対象となるシェーダを示す
+    //    今回は頂点シェーダだけに渡すのでvk::ShaderStageFlagBits::eVertexを指定 フラグメントシェーダに渡したい場合はvk::ShaderStageFlagBits::eFragmentを指定します。ビットマスクなので、ORで重ねれば両方に渡すことも可能です。
+
+    vk::DescriptorSetLayoutBinding descSetLayoutBinding[1];
+    descSetLayoutBinding[0].binding = 0;
+    descSetLayoutBinding[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+    descSetLayoutBinding[0].descriptorCount = 1;
+    descSetLayoutBinding[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
+
+    vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo{};
+    descSetLayoutCreateInfo.bindingCount = std::size(descSetLayoutBinding);
+    descSetLayoutCreateInfo.pBindings = descSetLayoutBinding;
+
+    // デスクリプタセットレイアウトを作成したあとはそれをパイプラインレイアウトに設定する必要がある
+    // パイプラインは描画の手順を表すオブジェクト
+    // 頂点入力デスクリプションなどと同様、シェーダへのデータの読み込ませ方はここで設定する
+    _discriptorSetLayouts.push_back(_device->createDescriptorSetLayoutUnique(descSetLayoutCreateInfo));
+}
+
+
+
+
+
+
+
 
 void Renderer::createFramebuffers() {
     // レンダーパスは処理(サブパス)とデータ(アタッチメント)のつながりと関係性を記述するが、具体的な処理内容やどのデータを扱うかについては関与しない
@@ -486,36 +634,6 @@ void Renderer::sendVertexBuffer()
 
     _graphicsQueue.submit({submitInfo});
     _graphicsQueue.waitIdle();
-}
-
-void Renderer::createDiscriptorSetLayouts()
-{
-    // vk::DescriptorSetLayoutBindingがデスクリプタ1つの情報を表す
-    // これの配列からデスクリプタセットレイアウトを作成
-    //
-    // binding はシェーダと結びつけるための番号を表す = バインディング番号
-    //    頂点シェーダにlayout(set = 0, binding = 0)などと指定したが、このときのbindingの数字と揃えてあることに注意
-    // descriptorType はデスクリプタの種別を示す
-    //    今回シェーダに渡すものはバッファなのでvk::DescriptorType::eUniformBufferを指定
-    // descriptorCount はデスクリプタの個数を表す
-    //    デスクリプタは配列として複数のデータを持てるが、ここにその要素数を指定する 今回は1個だけなので1を指定
-    // stageFlags はデータを渡す対象となるシェーダを示す
-    //    今回は頂点シェーダだけに渡すのでvk::ShaderStageFlagBits::eVertexを指定 フラグメントシェーダに渡したい場合はvk::ShaderStageFlagBits::eFragmentを指定します。ビットマスクなので、ORで重ねれば両方に渡すことも可能です。
-
-    vk::DescriptorSetLayoutBinding descSetLayoutBinding[1];
-    descSetLayoutBinding[0].binding = 0;
-    descSetLayoutBinding[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-    descSetLayoutBinding[0].descriptorCount = 1;
-    descSetLayoutBinding[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
-
-    vk::DescriptorSetLayoutCreateInfo descSetLayoutCreateInfo{};
-    descSetLayoutCreateInfo.bindingCount = std::size(descSetLayoutBinding);
-    descSetLayoutCreateInfo.pBindings = descSetLayoutBinding;
-
-    // デスクリプタセットレイアウトを作成したあとはそれをパイプラインレイアウトに設定する必要がある
-    // パイプラインは描画の手順を表すオブジェクト
-    // 頂点入力デスクリプションなどと同様、シェーダへのデータの読み込ませ方はここで設定する
-    _discriptorSetLayouts.push_back(_device->createDescriptorSetLayoutUnique(descSetLayoutCreateInfo));
 }
 
 void Renderer::createVertexBindingDescription()
