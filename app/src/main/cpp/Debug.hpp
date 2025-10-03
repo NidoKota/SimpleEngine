@@ -6,8 +6,14 @@
 #include "Utility.hpp"
 #include "Renderer.hpp"
 
+#if DEBUG
 namespace Vulkan_Test
 {
+    void debug(Renderer* pRenderer)
+    {
+        // 全部1つの関数にして1度だけmainから呼ぶようにする
+    }
+
     void debugApplicationInfo(Renderer* pRenderer)
     {
         uint32_t apiVersion = pRenderer->Get_applicationInfo().apiVersion;
@@ -156,3 +162,4 @@ namespace Vulkan_Test
         SET_LOG_INDEX(0);
     }
 }
+#endif

@@ -21,6 +21,9 @@ void Renderer::finalize()
 
 void Renderer::nextFrame()
 {
+    render();
+
+
     auto& frameInfo = m_frameCommandInfos[m_currentFrameIndex];
     auto fence = frameInfo.commandFence;
     vkWaitForFences(m_vkDevice, 1, &fence, VK_TRUE, UINT64_MAX);
@@ -133,7 +136,7 @@ void Renderer::createInstance()
     _instanceRequiredExtensions = std::vector<const char*>();
     _instanceRequiredExtensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
     _instanceRequiredExtensions.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
-//    _instanceRequiredExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    // _instanceRequiredExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
     vk::InstanceCreateInfo instanceCreateInfo = vk::InstanceCreateInfo();
     instanceCreateInfo.pApplicationInfo = &_applicationInfo;
@@ -145,7 +148,8 @@ void Renderer::createInstance()
 
 void Renderer::createSurface()
 {
-    vk::AndroidSurfaceCreateInfoKHR surfaceCreateInfo = vk::AndroidSurfaceCreateInfoKHR(vk::AndroidSurfaceCreateFlagsKHR(), _pApp->window);
+    vk::AndroidSurfaceCreateInfoKHR surfaceCreateInfo = 
+        vk::AndroidSurfaceCreateInfoKHR(vk::AndroidSurfaceCreateFlagsKHR(), _platformParams.window);
     _surface = _instance->createAndroidSurfaceKHRUnique(surfaceCreateInfo);
 }
 
@@ -620,6 +624,7 @@ void Renderer::sendVertexBuffer()
     bufferCopy.dstOffset = 0;
     bufferCopy.size = sizeof(Vertex) * _vertices.size();
 
+    // todo: 
     vk::CommandBufferBeginInfo cmdBeginInfo;
     cmdBeginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
 
